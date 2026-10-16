@@ -166,6 +166,8 @@ button{font:inherit;color:inherit}
 .act{display:inline-flex;align-items:center;gap:8px;background:transparent;border:1.5px solid var(--cobalt);color:var(--cobalt);border-radius:10px;padding:10px 14px;min-height:44px;cursor:pointer}
 .act.on{background:var(--cobalt);color:var(--on-cobalt)}
 
+.toast{position:fixed;left:16px;right:16px;bottom:calc(20px + env(safe-area-inset-bottom));max-width:560px;margin:0 auto;z-index:40;background:var(--ink);color:var(--bg);border-radius:12px;padding:12px 16px;font-size:.92rem;line-height:1.45;opacity:0;transform:translateY(12px);pointer-events:none;transition:opacity .2s,transform .2s}
+.toast.show{opacity:1;transform:none}
 @media (prefers-reduced-motion: reduce){*{transition:none !important}}
 </style>
 </head>
@@ -229,6 +231,7 @@ LANG_UI.ru = {
   targets: {
     de: {
       onTarget: 'на немецком',
+      ofTarget: 'немецкого',
       whyExtra: [
         ['Объяснения для русскоговорящих', 'Хитрые места немецкого (<i>es gibt</i>, <i>weil</i>, <i>nichts</i>, артикли) объясняются по-русски, так, как их проще понять нам.'],
         ['Немецкий без паники', 'Порядок слов, падежи и отделяемые приставки появляются постепенно, по одному примеру из живого текста, а не стеной правил.']
@@ -236,6 +239,7 @@ LANG_UI.ru = {
     },
     es: {
       onTarget: 'на испанском',
+      ofTarget: 'испанского',
       whyExtra: [
         ['Объяснения для русскоговорящих', 'Хитрые слова (<i>hay</i>, <i>voy a</i>, <i>porque</i>) объясняются по-русски, без отсылок к английскому: так, как их проще понять нам.'],
         ['Испанский Испании', 'Слова и выражения из повседневной жизни в Испании: <i>piso</i>, <i>portal</i>, <i>vale</i>. Не латиноамериканский вариант.']
@@ -304,7 +308,8 @@ LANG_UI.ru = {
     learn: 'Отметить как выученное',
     learned: 'Выучено ✓',
     paraTitle: 'Перевод абзаца',
-    paraSay: 'Прослушать абзац'
+    paraSay: 'Прослушать абзац',
+    noVoice: 'На телефоне нет голоса {ofTarget} языка, поэтому озвучка звучит с чужим акцентом. Добавь его. iPhone: Настройки → Универсальный доступ → Устный контент → Голоса. Android: Настройки → Язык и ввод → Синтез речи.'
   }
 };
 
@@ -2308,11 +2313,40 @@ const ICON_SPEAK = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden=
 const ICON_BUBBLE = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 5h16v11H11l-4 3.5V16H4z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><path d="M8 9.5h8M8 12.5h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
 const BUB = `<span class="bub">${ICON_BUBBLE}</span>`;
 
+/* ---------- озвучка: выбираем голос нужного языка явно ---------- */
+let _voices = [];
+function loadVoices(){ if (!CAN_SPEAK) return; try { _voices = speechSynthesis.getVoices() || []; } catch(e) {} }
+if (CAN_SPEAK){
+  loadVoices();
+  try { speechSynthesis.addEventListener('voiceschanged', loadVoices); }
+  catch(e) { try { speechSynthesis.onvoiceschanged = loadVoices; } catch(e2) {} }
+}
+function pickVoice(lang){
+  const base = lang.split('-')[0].toLowerCase();
+  const norm = v => (v.lang || '').replace('_', '-').toLowerCase();
+  const cands = _voices.filter(v => norm(v).split('-')[0] === base);
+  if (!cands.length) return null;
+  const score = v => (norm(v) === lang.toLowerCase() ? 4 : 0)
+    + (/premium|enhanced|erweitert|mejorad|улучш/i.test(v.name || '') ? 2 : 0)
+    + (v.localService ? 1 : 0);
+  return cands.slice().sort((x, y) => score(y) - score(x))[0];
+}
+let _toastTimer = null;
+function showToast(msg){
+  let t = document.getElementById('toast');
+  if (!t){ t = document.createElement('div'); t.id = 'toast'; t.className = 'toast'; document.body.appendChild(t); }
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(_toastTimer); _toastTimer = setTimeout(() => t.classList.remove('show'), 9000);
+}
 function speak(text){
   if (!CAN_SPEAK) return;
   try {
-    const u = new SpeechSynthesisUtterance(text.replace(/[«»—]/g,' '));
+    if (!_voices.length) loadVoices();
+    const v = pickVoice(TGT.ttsLang);
+    const u = new SpeechSynthesisUtterance(text.replace(/[«»—„“]/g,' '));
     u.lang = TGT.ttsLang; u.rate = 0.85;
+    if (v) u.voice = v;
+    else if (_voices.length) showToast(fill(UI.sheet.noVoice, { ofTarget: UI.targets[TGT.code].ofTarget }));
     speechSynthesis.cancel(); speechSynthesis.speak(u);
   } catch(e) {}
 }
